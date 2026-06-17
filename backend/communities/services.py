@@ -4,7 +4,7 @@ from django.db import transaction
 from django.db.models import Count, Sum
 from django.utils import timezone
 
-from .models import Bill, Building, FeeType, Payment, Reminder, Room
+from .models import Bill, Building, FeeType, Owner, OwnerChange, Payment, Reminder, Room
 
 
 def make_number(prefix):
@@ -20,7 +20,7 @@ def generate_bills(fee_type_id, period, due_date, room_ids=None):
 
     created = []
     skipped = 0
-    for room in rooms.select_related("building"):
+    for room in rooms.select_related("building", "current_owner"):
         amount = fee_type.calculate_amount(room)
         bill, was_created = Bill.objects.get_or_create(
             room=room,
@@ -31,6 +31,7 @@ def generate_bills(fee_type_id, period, due_date, room_ids=None):
                 "amount": amount,
                 "due_date": due_date,
                 "status": Bill.UNPAID,
+                "owner": room.current_owner,
             },
         )
         if was_created:
@@ -38,6 +39,45 @@ def generate_bills(fee_type_id, period, due_date, room_ids=None):
         else:
             skipped += 1
     return created, skipped
+
+
+@transaction.atomic
+def change_owner(room_id, new_owner_data, change_date=None, effective_date=None, reason="", remark="", operator=""):
+    room = Room.objects.select_related("current_owner").get(pk=room_id)
+    old_owner = room.current_owner
+
+    new_owner, _ = Owner.objects.get_or_create(
+        name=new_owner_data["name"],
+        phone=new_owner_data.get("phone", ""),
+        defaults={
+            "id_card": new_owner_data.get("id_card", ""),
+            "address": new_owner_data.get("address", ""),
+            "remark": new_owner_data.get("remark", ""),
+        },
+    )
+
+    owner_change = OwnerChange.objects.create(
+        room=room,
+        old_owner=old_owner,
+        new_owner=new_owner,
+        change_date=change_date or timezone.localdate(),
+        effective_date=effective_date or timezone.localdate(),
+        reason=reason,
+        remark=remark,
+        operator=operator,
+    )
+
+    room.current_owner = new_owner
+    room.owner_name = new_owner.name
+    room.phone = new_owner.phone
+    room.save(update_fields=["current_owner", "owner_name", "phone"])
+
+    return owner_change
+
+
+@transaction.atomic
+def get_room_owner_history(room_id):
+    return OwnerChange.objects.filter(room_id=room_id).select_related("old_owner", "new_owner").order_by("-effective_date")
 
 
 @transaction.atomic
@@ -52,7 +92,7 @@ def pay_bill(bill, method, payer=""):
         bill=bill,
         amount=bill.amount,
         method=method,
-        payer=payer or bill.room.owner_name,
+        payer=payer or bill.owner_name,
         receipt_no=make_number("R"),
     )
     bill.status = Bill.PAID
@@ -65,14 +105,14 @@ def pay_bill(bill, method, payer=""):
 def create_overdue_reminders(channel=Reminder.SMS):
     today = timezone.localdate()
     overdue = Bill.objects.filter(status__in=[Bill.UNPAID, Bill.OVERDUE], due_date__lt=today).select_related(
-        "room", "room__building", "fee_type"
+        "room", "room__building", "fee_type", "owner"
     )
     reminders = []
     for bill in overdue:
         bill.status = Bill.OVERDUE
         bill.save(update_fields=["status"])
         message = (
-            f"{bill.room.owner_name}您好，您位于{bill.room.building.name}-{bill.room.room_no}的"
+            f"{bill.owner_name}您好，您位于{bill.room.building.name}-{bill.room.room_no}的"
             f"{bill.period}{bill.fee_type.name}欠费{bill.amount}元，请尽快缴纳。"
         )
         reminders.append(

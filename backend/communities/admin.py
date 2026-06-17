@@ -1,6 +1,19 @@
 from django.contrib import admin
 
-from .models import Bill, Building, FeeType, Payment, Reminder, Room
+from .models import Bill, Building, FeeType, Owner, OwnerChange, Payment, Reminder, Room
+
+
+@admin.register(Owner)
+class OwnerAdmin(admin.ModelAdmin):
+    list_display = ("name", "phone", "id_card", "created_at")
+    search_fields = ("name", "phone", "id_card")
+
+
+@admin.register(OwnerChange)
+class OwnerChangeAdmin(admin.ModelAdmin):
+    list_display = ("room", "old_owner", "new_owner", "change_date", "effective_date", "reason")
+    list_filter = ("change_date", "effective_date")
+    search_fields = ("room__room_no", "old_owner__name", "new_owner__name", "reason")
 
 
 @admin.register(Building)
@@ -11,9 +24,9 @@ class BuildingAdmin(admin.ModelAdmin):
 
 @admin.register(Room)
 class RoomAdmin(admin.ModelAdmin):
-    list_display = ("room_no", "building", "owner_name", "phone", "area", "is_active")
+    list_display = ("room_no", "building", "owner_name", "phone", "current_owner", "area", "is_active")
     list_filter = ("building", "is_active")
-    search_fields = ("room_no", "owner_name", "phone")
+    search_fields = ("room_no", "owner_name", "phone", "current_owner__name")
 
 
 @admin.register(FeeType)
@@ -24,9 +37,9 @@ class FeeTypeAdmin(admin.ModelAdmin):
 
 @admin.register(Bill)
 class BillAdmin(admin.ModelAdmin):
-    list_display = ("bill_no", "room", "fee_type", "period", "amount", "status", "due_date")
+    list_display = ("bill_no", "room", "owner_name", "fee_type", "period", "amount", "status", "due_date")
     list_filter = ("status", "fee_type", "period")
-    search_fields = ("bill_no", "room__room_no", "room__owner_name")
+    search_fields = ("bill_no", "room__room_no", "owner__name", "room__owner_name")
 
 
 @admin.register(Payment)
@@ -40,4 +53,4 @@ class PaymentAdmin(admin.ModelAdmin):
 class ReminderAdmin(admin.ModelAdmin):
     list_display = ("reminder_no", "bill", "channel", "status", "sent_at")
     list_filter = ("channel", "status")
-    search_fields = ("reminder_no", "bill__bill_no", "bill__room__owner_name")
+    search_fields = ("reminder_no", "bill__bill_no", "bill__owner__name", "bill__room__owner_name")

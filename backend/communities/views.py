@@ -4,17 +4,20 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 
-from .models import Bill, Building, FeeType, Payment, Reminder, Room
+from .models import Bill, Building, FeeType, Owner, OwnerChange, Payment, Reminder, Room
 from .serializers import (
     BillSerializer,
     BuildingDetailSerializer,
     BuildingSerializer,
     FeeTypeSerializer,
+    OwnerChangeCreateSerializer,
+    OwnerChangeSerializer,
+    OwnerSerializer,
     PaymentSerializer,
     ReminderSerializer,
     RoomSerializer,
 )
-from .services import create_overdue_reminders, dashboard_stats, generate_bills, pay_bill
+from .services import change_owner, create_overdue_reminders, dashboard_stats, generate_bills, get_room_owner_history, pay_bill
 
 
 class BuildingViewSet(viewsets.ModelViewSet):
@@ -27,8 +30,57 @@ class BuildingViewSet(viewsets.ModelViewSet):
         return BuildingSerializer
 
 
+class OwnerViewSet(viewsets.ModelViewSet):
+    queryset = Owner.objects.all()
+    serializer_class = OwnerSerializer
+
+
+class OwnerChangeViewSet(viewsets.ModelViewSet):
+    queryset = OwnerChange.objects.select_related("room", "room__building", "old_owner", "new_owner").all()
+    serializer_class = OwnerChangeSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        room = self.request.query_params.get("room")
+        if room:
+            queryset = queryset.filter(room_id=room)
+        return queryset
+
+    @action(detail=False, methods=["post"])
+    def change(self, request):
+        serializer = OwnerChangeCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+        new_owner_data = {
+            "name": data["new_owner_name"],
+            "phone": data.get("new_owner_phone", ""),
+            "id_card": data.get("new_owner_id_card", ""),
+            "address": data.get("new_owner_address", ""),
+            "remark": data.get("new_owner_remark", ""),
+        }
+
+        try:
+            owner_change = change_owner(
+                room_id=data["room"],
+                new_owner_data=new_owner_data,
+                change_date=data.get("change_date"),
+                effective_date=data.get("effective_date"),
+                reason=data.get("reason", ""),
+                remark=data.get("remark", ""),
+                operator=data.get("operator", ""),
+            )
+        except Room.DoesNotExist:
+            return Response({"detail": "房屋不存在"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(OwnerChangeSerializer(owner_change).data, status=status.HTTP_201_CREATED)
+
+
 class RoomViewSet(viewsets.ModelViewSet):
-    queryset = Room.objects.select_related("building").all()
+    queryset = Room.objects.select_related("building", "current_owner").all()
     serializer_class = RoomSerializer
 
     def get_queryset(self):
@@ -38,6 +90,43 @@ class RoomViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(building_id=building)
         return queryset
 
+    @action(detail=True, methods=["post"])
+    def change_owner(self, request, pk=None):
+        room = self.get_object()
+        serializer = OwnerChangeCreateSerializer(data={**request.data, "room": room.id})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+        new_owner_data = {
+            "name": data["new_owner_name"],
+            "phone": data.get("new_owner_phone", ""),
+            "id_card": data.get("new_owner_id_card", ""),
+            "address": data.get("new_owner_address", ""),
+            "remark": data.get("new_owner_remark", ""),
+        }
+
+        try:
+            owner_change = change_owner(
+                room_id=room.id,
+                new_owner_data=new_owner_data,
+                change_date=data.get("change_date"),
+                effective_date=data.get("effective_date"),
+                reason=data.get("reason", ""),
+                remark=data.get("remark", ""),
+                operator=data.get("operator", ""),
+            )
+        except Exception as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(OwnerChangeSerializer(owner_change).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["get"])
+    def owner_history(self, request, pk=None):
+        room = self.get_object()
+        history = get_room_owner_history(room.id)
+        return Response(OwnerChangeSerializer(history, many=True).data)
+
 
 class FeeTypeViewSet(viewsets.ModelViewSet):
     queryset = FeeType.objects.all()
@@ -45,7 +134,7 @@ class FeeTypeViewSet(viewsets.ModelViewSet):
 
 
 class BillViewSet(viewsets.ModelViewSet):
-    queryset = Bill.objects.select_related("room", "room__building", "fee_type").all()
+    queryset = Bill.objects.select_related("room", "room__building", "fee_type", "owner").all()
     serializer_class = BillSerializer
 
     def get_queryset(self):

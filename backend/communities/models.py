@@ -4,6 +4,43 @@ from django.db import models
 from django.utils import timezone
 
 
+class Owner(models.Model):
+    name = models.CharField("业主姓名", max_length=50)
+    phone = models.CharField("联系电话", max_length=30, blank=True)
+    id_card = models.CharField("身份证号", max_length=20, blank=True)
+    address = models.CharField("联系地址", max_length=200, blank=True)
+    remark = models.TextField("备注", blank=True)
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "业主"
+        verbose_name_plural = "业主"
+
+    def __str__(self):
+        return self.name
+
+
+class OwnerChange(models.Model):
+    room = models.ForeignKey("Room", related_name="owner_changes", on_delete=models.PROTECT)
+    old_owner = models.ForeignKey(Owner, related_name="old_changes", on_delete=models.PROTECT, null=True, blank=True)
+    new_owner = models.ForeignKey(Owner, related_name="new_changes", on_delete=models.PROTECT)
+    change_date = models.DateField("变更日期", default=timezone.localdate)
+    effective_date = models.DateField("生效日期", default=timezone.localdate)
+    reason = models.CharField("变更原因", max_length=200, blank=True)
+    remark = models.TextField("备注", blank=True)
+    operator = models.CharField("操作人", max_length=50, blank=True)
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+
+    class Meta:
+        ordering = ["-effective_date", "-created_at"]
+        verbose_name = "业主变更记录"
+        verbose_name_plural = "业主变更记录"
+
+    def __str__(self):
+        return f"{self.room} - {self.old_owner or '无'} -> {self.new_owner}"
+
+
 class Building(models.Model):
     name = models.CharField("楼栋名称", max_length=80, unique=True)
     address = models.CharField("地址", max_length=200, blank=True)
@@ -27,6 +64,7 @@ class Room(models.Model):
     room_no = models.CharField("房号", max_length=40)
     owner_name = models.CharField("业主姓名", max_length=50)
     phone = models.CharField("联系电话", max_length=30, blank=True)
+    current_owner = models.ForeignKey(Owner, related_name="rooms", on_delete=models.SET_NULL, null=True, blank=True)
     area = models.DecimalField("建筑面积", max_digits=8, decimal_places=2, default=Decimal("0.00"))
     is_active = models.BooleanField("是否入住", default=True)
     created_at = models.DateTimeField("创建时间", auto_now_add=True)
@@ -92,6 +130,7 @@ class Bill(models.Model):
 
     bill_no = models.CharField("账单编号", max_length=40, unique=True)
     room = models.ForeignKey(Room, related_name="bills", on_delete=models.PROTECT)
+    owner = models.ForeignKey(Owner, related_name="bills", on_delete=models.PROTECT, null=True, blank=True)
     fee_type = models.ForeignKey(FeeType, related_name="bills", on_delete=models.PROTECT)
     period = models.CharField("账期", max_length=20)
     amount = models.DecimalField("应收金额", max_digits=10, decimal_places=2)
@@ -108,6 +147,18 @@ class Bill(models.Model):
 
     def __str__(self):
         return self.bill_no
+
+    @property
+    def owner_name(self):
+        if self.owner:
+            return self.owner.name
+        return self.room.owner_name
+
+    @property
+    def owner_phone(self):
+        if self.owner:
+            return self.owner.phone
+        return self.room.phone
 
     @property
     def is_overdue(self):
