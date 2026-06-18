@@ -54,10 +54,14 @@
           <button class="btn-close" @click="closeChangeOwner">×</button>
         </div>
         <form @submit.prevent="submitChangeOwner" class="form-grid">
-          <div class="current-owner-info">
-            <p><strong>当前业主：</strong>{{ currentRoom?.owner_name || '无' }}</p>
-            <p><strong>联系电话：</strong>{{ currentRoom?.phone || '-' }}</p>
+          <div class="current-owner-info" :class="{ 'no-owner': !currentRoom?.current_owner_id }">
+            <p v-if="currentRoom?.current_owner_id">
+              <strong>当前业主：</strong>{{ currentRoom.owner_name }}
+              <span v-if="currentRoom.phone">（{{ currentRoom.phone }}）</span>
+            </p>
+            <p v-else class="no-owner-warn">⚠ 当前房屋未关联业主，变更后将直接设置为新业主</p>
           </div>
+          <p v-if="changeOwnerMsg" class="change-owner-msg" :class="changeOwnerMsgType">{{ changeOwnerMsg }}</p>
           <label>新业主姓名<input v-model="ownerChangeForm.new_owner_name" required placeholder="请输入新业主姓名" /></label>
           <label>联系电话<input v-model="ownerChangeForm.new_owner_phone" placeholder="请输入联系电话" /></label>
           <label>身份证号<input v-model="ownerChangeForm.new_owner_id_card" placeholder="可选" /></label>
@@ -146,6 +150,8 @@ const showChangeOwnerModal = ref(false);
 const showHistoryModal = ref(false);
 const currentRoom = ref(null);
 const ownerHistory = ref([]);
+const changeOwnerMsg = ref("");
+const changeOwnerMsgType = ref("");
 const today = new Date().toISOString().split("T")[0];
 const ownerChangeForm = reactive({
   new_owner_name: "",
@@ -178,6 +184,8 @@ async function saveRoom() {
 
 function openChangeOwner(room) {
   currentRoom.value = room;
+  changeOwnerMsg.value = "";
+  changeOwnerMsgType.value = "";
   Object.assign(ownerChangeForm, {
     new_owner_name: "",
     new_owner_phone: "",
@@ -196,19 +204,32 @@ function openChangeOwner(room) {
 function closeChangeOwner() {
   showChangeOwnerModal.value = false;
   currentRoom.value = null;
+  changeOwnerMsg.value = "";
+  changeOwnerMsgType.value = "";
 }
 
 async function submitChangeOwner() {
   if (!currentRoom.value) return;
+  changeOwnerMsg.value = "";
   const payload = {};
   Object.keys(ownerChangeForm).forEach((key) => {
     if (ownerChangeForm[key] !== "" && ownerChangeForm[key] !== null && ownerChangeForm[key] !== undefined) {
       payload[key] = ownerChangeForm[key];
     }
   });
-  await propertyApi.changeRoomOwner(currentRoom.value.id, payload);
-  closeChangeOwner();
-  await load();
+  try {
+    await propertyApi.changeRoomOwner(currentRoom.value.id, payload);
+    changeOwnerMsg.value = "业主变更成功！";
+    changeOwnerMsgType.value = "success";
+    await load();
+    setTimeout(() => {
+      closeChangeOwner();
+    }, 1200);
+  } catch (err) {
+    const detail = err?.response?.data?.detail || err?.response?.data?.new_owner_name?.[0] || err?.message || "变更失败，请稍后重试";
+    changeOwnerMsg.value = detail;
+    changeOwnerMsgType.value = "error";
+  }
 }
 
 async function viewOwnerHistory(room) {
@@ -314,8 +335,38 @@ onMounted(load);
   margin-bottom: 4px;
 }
 
+.current-owner-info.no-owner {
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+}
+
 .current-owner-info p {
   margin: 4px 0;
+}
+
+.no-owner-warn {
+  color: #8a5a00;
+  font-weight: 500;
+}
+
+.change-owner-msg {
+  margin: 0 0 4px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.change-owner-msg.success {
+  background: #dff4eb;
+  color: #147050;
+  border: 1px solid #8dd5b5;
+}
+
+.change-owner-msg.error {
+  background: #ffe2e2;
+  color: #b42318;
+  border: 1px solid #f5a3a3;
 }
 
 .history-list {
