@@ -219,12 +219,9 @@ async function submitChangeOwner() {
   });
   try {
     await propertyApi.changeRoomOwner(currentRoom.value.id, payload);
-    changeOwnerMsg.value = "业主变更成功！";
+    changeOwnerMsg.value = "业主变更成功！请手动关闭此弹窗。";
     changeOwnerMsgType.value = "success";
     await load();
-    setTimeout(() => {
-      closeChangeOwner();
-    }, 1200);
   } catch (err) {
     const detail = err?.response?.data?.detail || err?.response?.data?.new_owner_name?.[0] || err?.message || "变更失败，请稍后重试";
     changeOwnerMsg.value = detail;
